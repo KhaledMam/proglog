@@ -25,16 +25,17 @@ type Log struct {
 }
 
 func NewLog(dir string, c Config) (*Log, error) {
-	if c.Segment.MaxIndexBytes == 0 {
-		c.Segment.MaxIndexBytes = 1024
-	}
 	if c.Segment.MaxStoreBytes == 0 {
 		c.Segment.MaxStoreBytes = 1024
+	}
+	if c.Segment.MaxIndexBytes == 0 {
+		c.Segment.MaxIndexBytes = 1024
 	}
 	l := &Log{
 		Dir:    dir,
 		Config: c,
 	}
+
 	return l, l.setup()
 }
 
@@ -52,14 +53,15 @@ func (l *Log) setup() error {
 		off, _ := strconv.ParseUint(offStr, 10, 0)
 		baseOffsets = append(baseOffsets, off)
 	}
-	sort.Slice(baseOffsets, func(i int, j int) bool {
+	sort.Slice(baseOffsets, func(i, j int) bool {
 		return baseOffsets[i] < baseOffsets[j]
 	})
 	for i := 0; i < len(baseOffsets); i++ {
 		if err = l.newSegment(baseOffsets[i]); err != nil {
 			return err
 		}
-		//baseoffset contains dup for index and store so we skip the dub
+		// baseOffset contains dup for index and store so we skip
+		// the dup
 		i++
 	}
 	if l.segments == nil {
@@ -74,7 +76,7 @@ func (l *Log) setup() error {
 
 func (l *Log) Append(record *api.Record) (uint64, error) {
 	l.mu.Lock()
-	defer l.mu.Lock()
+	defer l.mu.Unlock()
 	off, err := l.activeSegment.Append(record)
 	if err != nil {
 		return 0, err
@@ -99,6 +101,16 @@ func (l *Log) Read(off uint64) (*api.Record, error) {
 		return nil, fmt.Errorf("offset out of range: %d", off)
 	}
 	return s.Read(off)
+}
+
+func (l *Log) newSegment(off uint64) error {
+	s, err := newSegment(l.Dir, off, l.Config)
+	if err != nil {
+		return err
+	}
+	l.segments = append(l.segments, s)
+	l.activeSegment = s
+	return nil
 }
 
 func (l *Log) Close() error {
@@ -149,7 +161,7 @@ func (l *Log) Truncate(lowest uint64) error {
 	for _, s := range l.segments {
 		if s.nextOffset <= lowest+1 {
 			if err := s.Remove(); err != nil {
-				return nil
+				return err
 			}
 			continue
 		}
@@ -178,14 +190,4 @@ func (o *originReader) Read(p []byte) (int, error) {
 	n, err := o.ReadAt(p, o.off)
 	o.off += int64(n)
 	return n, err
-}
-
-func (l *Log) newSegment(off uint64) error {
-	s, err := newSegment(l.Dir, off, l.Config)
-	if err != nil {
-		return err
-	}
-	l.segments = append(l.segments, s)
-	l.activeSegment = s
-	return nil
 }
